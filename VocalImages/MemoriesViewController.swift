@@ -6,6 +6,9 @@
 //  Copyright © 2019 Tanner Quesenberry. All rights reserved.
 //
 
+import AVFoundation
+import Photos
+import Speech
 import UIKit
 
 class MemoriesViewController: UICollectionViewController {
@@ -14,7 +17,7 @@ class MemoriesViewController: UICollectionViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Do any additional setup after loading the view.
+        checkPermissions()
     }
     
 
@@ -28,4 +31,23 @@ class MemoriesViewController: UICollectionViewController {
     }
     */
 
+    //Function checks that all permissions granted. If false, show FirstRun view controller
+    func checkPermissions(){
+        //check status of 3 required permissions
+        let photosAuthorized = PHPhotoLibrary.authorizationStatus() == .authorized
+        let recordingAuthorized = AVAudioSession.sharedInstance().recordPermission == .granted
+        let transcribeAuthorized = SFSpeechRecognizer.authorizationStatus() == .authorized
+        
+        //make single boolean of all 3
+        let authorized = photosAuthorized && recordingAuthorized && transcribeAuthorized
+        
+        //if missing one, show first run view controller
+        if authorized == false {
+            if let vc = storyboard?.instantiateViewController(withIdentifier: "FirstRun") {
+                navigationController?.present(vc, animated: true)
+            }
+        }
+    }
+    
+    
 }
