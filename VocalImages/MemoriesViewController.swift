@@ -10,17 +10,22 @@ import AVFoundation
 import Photos
 import Speech
 import UIKit
+import CoreSpotlight
+import MobileCoreServices
 
-class MemoriesViewController: UICollectionViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UICollectionViewDelegateFlowLayout, AVAudioRecorderDelegate {
+class MemoriesViewController: UICollectionViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UICollectionViewDelegateFlowLayout, AVAudioRecorderDelegate, UISearchBarDelegate {
 
     //Full path to root name of memories without extensions
     var memories = [URL]()
+    var filteredMemories = [URL]()
     //Store which memory activate the long press gesture recognizer
     var activeMemory: URL!
     
     var audioPlayer: AVAudioPlayer?
     var audioRecorder: AVAudioRecorder?
     var recordingURL: URL!
+    
+    var searchQuery: CSSearchQuery?
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -88,6 +93,8 @@ class MemoriesViewController: UICollectionViewController, UIImagePickerControlle
                 memories.append(memoryPath)
             }
         }
+        
+        filteredMemories = memories
         
         //reload list of memories in second section, first section is search bar
         collectionView?.reloadSections(IndexSet(integer: 1))
@@ -205,14 +212,14 @@ class MemoriesViewController: UICollectionViewController, UIImagePickerControlle
         if section == 0 {
             return 0
         } else {
-            return memories.count
+            return filteredMemories.count
         }
     }
     
     override func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "Memory", for: indexPath) as! MemoryCell
         
-        let memory = memories[indexPath.row]
+        let memory = filteredMemories[indexPath.row]
         let imageName = thumbnailURL(for: memory).path
         let image = UIImage(contentsOfFile: imageName)
         
@@ -237,7 +244,7 @@ class MemoriesViewController: UICollectionViewController, UIImagePickerControlle
     
     
     override func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let memory = memories[indexPath.row]
+        let memory = filteredMemories[indexPath.row]
         let fm = FileManager.default
         
         do {
@@ -279,7 +286,7 @@ class MemoriesViewController: UICollectionViewController, UIImagePickerControlle
             let cell = sender.view as! MemoryCell
             
             if let index = collectionView?.indexPath(for: cell) {
-                activeMemory = memories[index.row]
+                activeMemory = filteredMemories[index.row]
                 recordMemory()
             }
         }else if sender.state == .ended {
@@ -374,6 +381,7 @@ class MemoriesViewController: UICollectionViewController, UIImagePickerControlle
                 
                 do {
                     try text.write(to: transcription, atomically: true, encoding: String.Encoding.utf8)
+                    self.indexMemory(memory: memory, text: text)
                 } catch {
                     print("Failed to save transcription.")
                 }
@@ -387,4 +395,84 @@ class MemoriesViewController: UICollectionViewController, UIImagePickerControlle
             finishRecording(success: false)
         }
     }
+    
+    //MARK: - Search Bar functionality
+    
+    //Index the memory for CoreSpotlight Searches
+    func indexMemory(memory: URL, text: String) {
+        //crete basic attribute set
+        let attributeSet = CSSearchableItemAttributeSet(itemContentType: kUTTypeText as String)
+        attributeSet.title = "Vocal Images Memory"
+        attributeSet.contentDescription = text
+        attributeSet.thumbnailURL = thumbnailURL(for: memory)
+        
+        //wrap it in a searchable item, using the memory's full index path as its unique identifier
+        let item = CSSearchableItem(uniqueIdentifier: memory.path, domainIdentifier: "com.tannerquesenberry", attributeSet: attributeSet)
+        
+        //make it never expire
+        item.expirationDate = Date.distantFuture
+        
+        ///ask spotlight to index the item
+        CSSearchableIndex.default().indexSearchableItems([item]) { (error) in
+            if let error = error {
+                print("Indexing error: \(error.localizedDescription)")
+            }else {
+                print("Search item successfully indexed: \(text)")
+            }
+        }
+    }
+    
+    
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        filterMemories(text: searchText)
+    }
+    
+    
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        searchBar.resignFirstResponder()
+    }
+    
+    
+    func filterMemories(text: String){
+        //if search bar is deleted
+        guard text.count > 0 else {
+            filteredMemories = memories
+            
+            UIView.performWithoutAnimation {
+                collectionView?.reloadSections(IndexSet(integer: 1))
+            }
+            return
+        }
+        
+        var allItems = [CSSearchableItem]()
+        
+        searchQuery?.cancel()
+        
+        let queryString = "contentDescription == \"*\(text)*\"c"
+        searchQuery = CSSearchQuery(queryString: queryString, attributes: nil)
+        
+        searchQuery?.foundItemsHandler = { items in
+            allItems.append(contentsOf: items)
+        }
+        
+        searchQuery?.completionHandler = { error in
+            DispatchQueue.main.async { [unowned self] in
+                self.activateFilter(matches: allItems)
+            }
+        }
+        
+        searchQuery?.start()
+    }
+    
+    //Create filtered memories array based on result of Spotlight search
+    func activateFilter(matches: [CSSearchableItem]){
+        filteredMemories = matches.map { item in
+            return URL(fileURLWithPath: item.uniqueIdentifier)
+        }
+        
+        UIView.performWithoutAnimation {
+            collectionView?.reloadSections(IndexSet(integer: 1))
+        }
+    }
+    
 }
